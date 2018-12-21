@@ -1,0 +1,90 @@
+version: "3.8"
+
+services:
+  proxy:
+    image: traefik:v2.4
+    container_name: halley_proxy
+    restart: always
+    command: 
+    - "--api.insecure=true" # Remove in production
+    - "--providers.docker" 
+    - "--entrypoints.web.address=:80"
+    # Do not expose containers unless explicitly told so
+    - "--providers.docker.exposedbydefault=false"
+    ports:
+      - "80:80"
+      - "8080:8080" # Remove in production
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  halley_app:
+    image: hub.git.datatellers.info/caltagirone/halley/backend:develop
+    container_name: halley_app
+    restart: always
+    env_file:
+      - .env
+    volumes:
+      - type: bind
+        source: /opt/halley_storage
+        target: /app/documents
+    depends_on:
+      - halley_db
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.halley_app.rule=PathPrefix(`/api`)"
+      - "traefik.http.services.halley_app.loadbalancer.server.port=5000"
+
+  # WAITING FRONTEND APP
+  # halley_fe:
+  #   image: hub.git.datatellers.info/caltagirone/halley/frontend:latest
+  #   container_name: halley_fe
+  #   restart: always
+  #   depends_on:
+  #     - halley_app
+  #   labels:
+  #     - "traefik.enable=true"
+  #     - "traefik.http.routers.halley_fe.rule=PathPrefix(`/`)"
+  #     - "traefik.http.services.halley_fe.loadbalancer.server.port=80"
+
+  halley_db:
+    image: postgres:13
+    container_name: halley_db
+    restart: always
+    env_file:
+      - .env
+    ports:
+      - 5432:5432 # Remove in production
+    volumes:
+      - ./halley.sql:/docker-entrypoint-initdb.d/halley.sql # Init script - will run only if there is no data
+      - dbdata:/var/lib/postgresql/data # Actual storage data of DB
+
+  adminer:
+    image: adminer
+    container_name: halley_adminer
+    depends_on:
+      - halley_db
+    environment: 
+    - ADMINER_DESIGN='hydra'
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.adminer.rule=PathPrefix(`/adminer`)"
+      - "traefik.http.services.adminer.loadbalancer.server.port=8080"
+
+  swagger:
+    image: swaggerapi/swagger-ui
+    container_name: halley_swagger
+    environment:
+      - SWAGGER_JSON=/halleyapi.yaml
+      - API_URL=doc/halleyapi.yaml
+      - BASE_URL=/swagger
+    volumes:
+      - ./swagger:/usr/share/nginx/html/doc
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.swagger.rule=PathPrefix(`/swagger`)"
+      - "traefik.http.services.swagger.loadbalancer.server.port=8080"
+
+volumes:
+  nodemodules:
+  swagger:
+  dbdata:
